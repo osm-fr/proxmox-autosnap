@@ -314,8 +314,26 @@ def remove_snapshot(vmid: str, virtualization: str, label: str = 'daily', keep: 
                         print('VM {0} - {1}'.format(vmid, run['message']))
 
 
-def zfs_send(vmid: str, virtualization: str, zfs_send_to: str):
+def zfs_send(vmid: str, virtualization: str, zfs_send_to: str, with_hostname: bool = False):
     cfg = get_pve_config(vmid, virtualization)
+
+    if with_hostname:
+        if virtualization == 'pct':
+            zfs_send_to = os.path.join(zfs_send_to, cfg["hostname"])
+        elif virtualization == 'qm':
+            zfs_send_to = os.path.join(zfs_send_to, cfg["name"])
+        # Create parent zfs subvolume on target
+        (target, zfsdir) = zfs_send_to.split(":")
+        params = ("ssh", target, "zfs", "create", "-u", "-p", zfsdir)
+        if DRY_RUN:
+            print(' '.join(params))
+        else:
+            run = run_command(params, force_no_sudo=True)
+            if run['status']:
+                print('VM {0} - zfs create to {1}:{2}'.format(vmid, target, zfsdir)) if not MUTE else None
+            else:
+                print('VM {0} - zfs create FAIL: {1}'.format(vmid, run['message']))
+                return -1
 
     for k, v in cfg.items():
         proxmox_vol = v.split(',')[0]
@@ -359,6 +377,8 @@ def main():
     parser.add_argument('-i', '--includevmstate', action='store_true', help='Include the VM state in snapshots.')
     parser.add_argument('--zfs-send-to', metavar='[USER@]HOST:ZFSDIR',
                         help='Send zfs snapshot to USER@HOST on ZFSDIR hierarchy - USER@ is optional with syncoid > 2:1')
+    parser.add_argument('--zfs-send-to-hostname', action='store_true',
+                        help='Prefix zfs subvolumes by hostname on remote host')
     parser.add_argument('-d', '--dryrun', action='store_true',
                         help='Do not create or delete snapshots, just print the commands.')
     parser.add_argument('--sudo', action='store_true', help='Launch commands through sudo.')
@@ -398,7 +418,7 @@ def main():
             remove_snapshot(vmid=k, virtualization=v, label=argp.label, keep=argp.keep)
     elif argp.zfs_send_to:
         for k, v in picked_vmid.items():
-            zfs_send(vmid=k, virtualization=v, zfs_send_to=argp.zfs_send_to)
+            zfs_send(vmid=k, virtualization=v, zfs_send_to=argp.zfs_send_to, with_hostname=argp.zfs_send_to_hostname)
     else:
         parser.print_help()
 
